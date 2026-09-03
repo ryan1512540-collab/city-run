@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>動物城市跑酷</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none}
+  html,body{height:100%;overflow:hidden;background:#0a0c1e;touch-action:none;
+    overscroll-behavior:none;-ms-touch-action:none;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;color:#eaf2ff}
+  #app{position:fixed;inset:0;touch-action:none}
+  canvas{display:block;touch-action:none}
+  #hud{position:fixed;top:14px;left:16px;font-size:22px;font-weight:700;
+    text-shadow:0 2px 6px rgba(0,0,0,.6);pointer-events:none;line-height:1.5;z-index:5}
+  #hud small{font-size:13px;font-weight:500;opacity:.7}
+  #best{position:fixed;top:14px;right:16px;font-size:14px;opacity:.75;pointer-events:none;z-index:5}
+  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:16px;background:rgba(8,10,24,.82);text-align:center;padding:20px;z-index:20}
+  #overlay.hidden{display:none}
+  #overlay h2{font-size:34px}
+  #overlay p{line-height:1.8;opacity:.92;max-width:500px}
+  button.start{cursor:pointer;border:none;border-radius:12px;padding:12px 30px;font-size:17px;font-weight:700;
+    color:#06121f;background:#4fd1ff}
+  button.start:disabled{opacity:.5;cursor:wait}
+  #hint{position:fixed;bottom:12px;left:0;right:0;text-align:center;font-size:13px;opacity:.55;pointer-events:none;z-index:5}
+  #touch{position:fixed;left:0;right:0;bottom:0;height:160px;pointer-events:none;z-index:8}
+  .tbtn{position:absolute;bottom:24px;width:78px;height:78px;border-radius:50%;
+    background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.25);
+    display:flex;align-items:center;justify-content:center;font-size:34px;
+    pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none;color:#fff}
+  #bLeft{left:24px}
+  #bRight{left:116px}
+  #bJump{right:24px;bottom:36px;width:104px;height:104px;font-size:26px;
+    background:rgba(87,255,176,.14);border-color:rgba(87,255,176,.4)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">得分 <span id="score">0</span><br><small id="mult">連分 x1</small></div>
+<div id="best">最佳 0</div>
+<div id="hint">← → 切道 · 空格 跳躍</div>
+<div id="touch">
+  <div class="tbtn" id="bLeft">◀</div>
+  <div class="tbtn" id="bRight">▶</div>
+  <div class="tbtn" id="bJump">跳</div>
+</div>
+<div id="overlay">
+  <h2>🐾 動物城市跑酷</h2>
+  <p id="desc">扮演小狐狸在霓虹城市奔跑，切道、跳過障礙。<br>手機用下方按鈕：◀ ▶ 切道 · 跳 跳躍</p>
+  <button class="start" id="btn" disabled>載入中…</button>
+</div>
+
+<script>
+(function(){
+  function stop(e){e.preventDefault();}
+  ["gesturestart","gesturechange","gestureend","dblclick"].forEach(function(t){
+    document.addEventListener(t,stop,{passive:false});
+  });
+  document.addEventListener("touchmove",function(e){
+    if(e.touches.length>1)e.preventDefault();
+  },{passive:false});
+  document.addEventListener("wheel",function(e){
+    if(e.ctrlKey)e.preventDefault();
+  },{passive:false});
+  var lastTap=0;
+  document.addEventListener("touchend",function(e){
+    var now=Date.now();
+    if(now-lastTap<400)e.preventDefault();
+    lastTap=now;
+  },{passive:false});
+})();
+(function(){
+  var urls=[
+    "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js",
+    "https://unpkg.com/three@0.160.0/build/three.min.js",
+    "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"
+  ];
+  var i=0;
+  function fail(){
+    document.getElementById("desc").textContent="遊戲引擎載入失敗，請換網路或稍後再試。";
+    document.getElementById("btn").textContent="無法開始";
+  }
+  function next(){
+    if(window.THREE){startGame();return;}
+    if(i>=urls.length){fail();return;}
+    var s=document.createElement("script");
+    s.src=urls[i++];
+    s.onload=function(){window.THREE?startGame():next();};
+    s.onerror=next;
+    document.head.appendChild(s);
+  }
+  next();
+})();
+
+function startGame(){
+  var THREE=window.THREE;
+  var app=document.getElementById("app");
+  var scoreEl=document.getElementById("score");
+  var multEl=document.getElementById("mult");
+  var bestEl=document.getElementById("best");
+  var overlay=document.getElementById("overlay");
+  var btn=document.getElementById("btn");
+  var desc=document.getElementById("desc");
+
+  var scene=new THREE.Scene();
+  scene.fog=new THREE.Fog(0x0a0c1e,35,120);
+  var camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,300);
+  var renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth,innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setClearColor(0x0a0c1e);
+  app.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x6677aa,0.95));
+  var moon=new THREE.DirectionalLight(0xbfd4ff,1.2);
+  moon.position.set(6,18,8);
+  scene.add(moon);
+
+  var LANES=[-2.2,0,2.2];
+  var road=new THREE.Mesh(new THREE.BoxGeometry(8,0.4,260), new THREE.MeshLambertMaterial({color:0x14162a}));
+  road.position.set(0,-0.2,-90);
+  scene.add(road);
+  for(var i=0;i<3;i++){
+    var line=new THREE.Mesh(new THREE.PlaneGeometry(0.12,260), new THREE.MeshBasicMaterial({color:0x4fd1ff,transparent:true,opacity:0.4}));
+    line.rotation.x=-Math.PI/2;
+    line.position.set(LANES[i],0.02,-90);
+    scene.add(line);
+  }
+  [-3.9,3.9].forEach(function(x){
+    var e=new THREE.Mesh(new THREE.BoxGeometry(0.2,1.2,260), new THREE.MeshLambertMaterial({color:0x223344,emissive:0x4fd1ff}));
+    e.position.set(x,0.4,-90);
+    scene.add(e);
+  });
+
+  var buildingMat=new THREE.MeshLambertMaterial({color:0x1b2350,emissive:0x0a1030});
+  function addBuilding(x,z,h){
+    var b=new THREE.Mesh(new THREE.BoxGeometry(6,h,10),buildingMat);
+    b.position.set(x,h/2,z);
+    scene.add(b);
+    var n=Math.floor(h/3);
+    for(var i=0;i<n;i++){
+      var w=new THREE.Mesh(new THREE.PlaneGeometry(1.2,1.2), new THREE.MeshBasicMaterial({
+        color:Math.random()<0.5?0x4fd1ff:0xffb057,transparent:true,opacity:Math.random()*0.8+0.2
+      }));
+      w.position.set(x+(Math.random()<0.5?-3.02:3.02),2+i*3,z+(Math.random()-0.5)*6);
+      w.rotation.y=x<0?Math.PI/2:-Math.PI/2;
+      scene.add(w);
+    }
+  }
+  for(var z=20;z>-260;z-=14){
+    addBuilding(-11,z,10+Math.random()*22);
+    addBuilding(11,z+7,10+Math.random()*22);
+  }
+
+  function mat(color){return new THREE.MeshLambertMaterial({color:color});}
+  function part(parent,geo,material,x,y,z){
+    var m=new THREE.Mesh(geo,material);
+    m.position.set(x,y,z);
+    parent.add(m);
+    return m;
+  }
+  function makeFox(){
+    var fox=new THREE.Group();
+    var orange=mat(0xff8a3d), cream=mat(0xffe0b0), dark=mat(0x2a1a12), white=mat(0xfff6ea);
+    var body=part(fox,new THREE.SphereGeometry(0.42,16,12),orange,0,0.72,0);
+    body.scale.set(1,0.85,1.25);
+    var belly=part(fox,new THREE.SphereGeometry(0.28,12,10),cream,0,0.58,-0.12);
+    belly.scale.set(0.9,0.7,1.1);
+    var head=new THREE.Group();
+    head.position.set(0,1.12,-0.38);
+    fox.add(head);
+    part(head,new THREE.SphereGeometry(0.32,16,12),orange,0,0,0);
+    var snout=part(head,new THREE.SphereGeometry(0.14,12,10),cream,0,-0.06,-0.26);
+    snout.scale.set(1,0.7,1.1);
+    part(head,new THREE.SphereGeometry(0.05,8,8),dark,0,-0.04,-0.38);
+    part(head,new THREE.SphereGeometry(0.055,8,8),mat(0x1a120c),0.11,0.06,-0.26);
+    part(head,new THREE.SphereGeometry(0.055,8,8),mat(0x1a120c),-0.11,0.06,-0.26);
+    var earL=part(head,new THREE.ConeGeometry(0.12,0.28,8),orange,-0.16,0.28,0.02);
+    earL.rotation.z=0.2;
+    var earR=part(head,new THREE.ConeGeometry(0.12,0.28,8),orange,0.16,0.28,0.02);
+    earR.rotation.z=-0.2;
+    var tail=new THREE.Group();
+    tail.position.set(0,0.78,0.42);
+    fox.add(tail);
+    var tailBase=part(tail,new THREE.SphereGeometry(0.16,10,8),orange,0,0,0.18);
+    tailBase.scale.set(0.8,0.8,1.6);
+    var tailTip=part(tail,new THREE.SphereGeometry(0.12,10,8),white,0,0.08,0.42);
+    tailTip.scale.set(0.9,0.8,1.2);
+    function makeLeg(x,zz){
+      var leg=new THREE.Group();
+      leg.position.set(x,0.42,zz);
+      fox.add(leg);
+      part(leg,new THREE.CylinderGeometry(0.09,0.08,0.34,8),orange,0,-0.08,0);
+      var paw=part(leg,new THREE.SphereGeometry(0.09,8,8),dark,0,-0.28,-0.02);
+      paw.scale.set(1,0.7,1.15);
+      return leg;
+    }
+    fox.userData={head:head,tail:tail,legs:{
+      fl:makeLeg(-0.18,-0.22),fr:makeLeg(0.18,-0.22),
+      bl:makeLeg(-0.18,0.22),br:makeLeg(0.18,0.22)
+    },pose:"run"};
+    return fox;
+  }
+
+  var animal=makeFox();
+  scene.add(animal);
+
+  var obstacles=[];
+  function makeObstacle(){
+    var type=Math.floor(Math.random()*3), mesh, h;
+    if(type===0){
+      h=1.2;
+      mesh=new THREE.Mesh(new THREE.BoxGeometry(2,h,2), mat(0xff5470));
+    }else if(type===1){
+      h=1;
+      mesh=new THREE.Mesh(new THREE.BoxGeometry(2.4,h,1), new THREE.MeshLambertMaterial({color:0xff5470,emissive:0x551018}));
+    }else{
+      h=2;
+      mesh=new THREE.Group();
+      var body=new THREE.Mesh(new THREE.BoxGeometry(2,1,3.2), mat(0xffb057));
+      body.position.y=0.5;
+      mesh.add(body);
+      var top=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.8,1.6), mat(0x223344));
+      top.position.y=1.3;
+      mesh.add(top);
+    }
+    mesh.userData={h:h};
+    scene.add(mesh);
+    return mesh;
+  }
+
+  var running=false, last=0, score=0, best=+(localStorage.getItem("animal_best")||0);
+  var speed=22, t=0, dist=0, distToNext=14;
+  var lane=1, laneX=0, vy=0, grounded=true, jumps=0, shake=0;
+  var GRAV=-38, JUMP=14;
+  bestEl.textContent="最佳 "+Math.floor(best);
+
+  function playPose(name){animal.userData.pose=name;}
+  function animateFox(dt){
+    var d=animal.userData, pose=d.pose, run=pose==="run", jump=pose==="jump", fall=pose==="fall";
+    var cycle=t*14;
+    var swing=run?Math.sin(cycle)*0.7:jump?0.55:fall?0.15:0;
+    d.head.rotation.x=THREE.MathUtils.lerp(d.head.rotation.x, jump?0.25:fall?-0.35:-Math.sin(cycle)*0.08, dt*10);
+    d.tail.rotation.x=THREE.MathUtils.lerp(d.tail.rotation.x, jump?-0.4:fall?0.2:0.35-Math.sin(cycle*1.3)*0.25, dt*8);
+    d.tail.rotation.y=THREE.MathUtils.lerp(d.tail.rotation.y, Math.sin(t*8)*0.35, dt*6);
+    var lift=jump?0.2:0;
+    d.legs.fl.rotation.x=swing+lift;
+    d.legs.br.rotation.x=swing+lift;
+    d.legs.fr.rotation.x=-swing+lift;
+    d.legs.bl.rotation.x=-swing+lift;
+  }
+
+  function updHUD(){
+    scoreEl.textContent=Math.floor(score);
+    multEl.textContent="連分 x"+(1+Math.min(9,Math.floor(dist/120)));
+    bestEl.textContent="最佳 "+Math.floor(best);
+  }
+  function reset(){
+    score=0;t=0;dist=0;speed=22;distToNext=14;
+    lane=1;laneX=0;vy=0;grounded=true;jumps=0;shake=0;
+    animal.position.set(0,0,0);
+    animal.rotation.set(0,0,0);
+    playPose("run");
+    while(obstacles.length){
+      var o=obstacles.pop();
+      scene.remove(o);
+    }
+    updHUD();
+  }
+  function start(){
+    reset();
+    running=true;
+    overlay.classList.add("hidden");
+    last=performance.now();
+    requestAnimationFrame(loop);
+  }
+  function endGame(){
+    running=false;
+    if(score>best){best=Math.floor(score);localStorage.setItem("animal_best",best);}
+    overlay.querySelector("h2").textContent="💥 撞到了！";
+    desc.innerHTML="最終得分 <b style='color:#4fd1ff'>"+Math.floor(score)+"</b><br>再跑一次挑戰更高分！";
+    btn.textContent="再玩一次";
+    overlay.classList.remove("hidden");
+    playPose("fall");
+  }
+  function doJump(){
+    if(!running)return;
+    if(jumps<2){
+      vy=JUMP*(jumps===0?1:0.85);
+      grounded=false;
+      jumps++;
+      playPose("jump");
+    }
+  }
+  function setLane(n){if(running)lane=Math.max(0,Math.min(2,n));}
+
+  addEventListener("keydown",function(e){
+    if(!running)return;
+    if(e.code==="ArrowLeft"||e.code==="KeyA")setLane(lane-1);
+    if(e.code==="ArrowRight"||e.code==="KeyD")setLane(lane+1);
+    if(e.code==="Space"||e.code==="ArrowUp"||e.code==="KeyW"){e.preventDefault();doJump();}
+  });
+  function bind(id,fn){
+    var el=document.getElementById(id);
+    el.addEventListener("pointerdown",function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    });
+  }
+  bind("bLeft",function(){setLane(lane-1);});
+  bind("bRight",function(){setLane(lane+1);});
+  bind("bJump",doJump);
+
+  var tx=0;
+  addEventListener("touchstart",function(e){if(e.touches.length)tx=e.touches[0].clientX;},{passive:true});
+  addEventListener("touchend",function(e){
+    if(!running)return;
+    var dx=e.changedTouches[0].clientX-tx;
+    if(Math.abs(dx)>40)setLane(lane+(dx>0?1:-1));
+  },{passive:true});
+
+  btn.disabled=false;
+  btn.textContent="開始遊戲";
+  btn.onclick=start;
+
+  function update(dt){
+    t+=dt;
+    speed+=dt*1.2;
+    dist+=speed*dt;
+    var mult=1+Math.min(9,Math.floor(dist/120));
+    score+=speed*dt*mult*0.1;
+    laneX=THREE.MathUtils.lerp(laneX,LANES[lane],Math.min(1,dt*12));
+    animal.position.x=laneX;
+    animal.rotation.z=THREE.MathUtils.lerp(animal.rotation.z,(LANES[lane]-laneX)*-0.4,dt*10);
+    if(!grounded){
+      vy+=GRAV*dt;
+      var ny=animal.position.y+vy*dt;
+      if(ny<=0){
+        animal.position.y=0;grounded=true;jumps=0;vy=0;playPose("run");
+      }else animal.position.y=ny;
+    }
+    animal.rotation.x=grounded?0:THREE.MathUtils.lerp(animal.rotation.x,0.35,dt*8);
+    animateFox(dt);
+    shake=Math.max(0,shake-dt*2);
+    distToNext-=speed*dt;
+    if(distToNext<=0){
+      var o=makeObstacle();
+      var li=Math.floor(Math.random()*3);
+      o.position.set(LANES[li],0,-dist);
+      if(Math.random()<0.25){
+        var o2=makeObstacle();
+        o2.position.set(LANES[(li+1+Math.floor(Math.random()*2))%3],0,-dist);
+        obstacles.push(o2);
+      }
+      obstacles.push(o);
+      distToNext=Math.max(8,15-speed*0.15)+Math.random()*6;
+    }
+    for(var i=obstacles.length-1;i>=0;i--){
+      var ob=obstacles[i];
+      ob.position.z+=speed*dt;
+      if(ob.position.z>-1&&ob.position.z<1.2){
+        if(Math.abs(ob.position.x-laneX)<1.4&&animal.position.y<ob.userData.h){
+          shake=1;endGame();return;
+        }
+      }
+      if(ob.position.z>10){scene.remove(ob);obstacles.splice(i,1);}
+    }
+    camera.position.set(laneX*0.5,4+animal.position.y*0.4,7);
+    camera.lookAt(laneX*0.5,1.4,-10);
+    if(shake>0)camera.position.x+=(Math.random()-0.5)*shake;
+    updHUD();
+  }
+  function loop(now){
+    if(!running)return;
+    var dt=Math.min((now-last)/1000,0.05);
+    last=now;
+    update(dt);
+    renderer.render(scene,camera);
+    requestAnimationFrame(loop);
+  }
+  addEventListener("resize",function(){
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
